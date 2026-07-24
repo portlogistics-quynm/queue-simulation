@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
+
+  <title>Queue Simulation</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    body {
+      max-width: 1000px;
+      margin: 30px auto;
+      padding: 0 20px;
+      font-family: Arial, sans-serif;
+      background: #f5f7fa;
+      color: #222;
+    }
+
+    .panel {
+      padding: 22px;
+      background: white;
+      border: 1px solid #d8dce2;
+      border-radius: 12px;
+    }
+
+    h2 {
+      margin-top: 0;
+    }
+
+    h3 {
+      margin-top: 28px;
+      margin-bottom: 10px;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: end;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      font-weight: bold;
+    }
+
+    input {
+      width: 110px;
+      padding: 8px;
+      border: 1px solid #aaa;
+      border-radius: 5px;
+    }
+
+    button {
+      padding: 9px 18px;
+      border: 1px solid #888;
+      border-radius: 5px;
+      cursor: pointer;
+      background: #f7f7f7;
+    }
+
+    button:hover {
+      background: #e8e8e8;
+    }
+
+    #simCanvas {
+      width: 100%;
+      max-width: 900px;
+      height: auto;
+      border: 1px solid #ccc;
+      background: white;
+    }
+
+    .status {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+      gap: 12px;
+      margin: 15px 0 20px;
+    }
+
+    .status-item {
+      padding: 10px;
+      background: #f5f7fa;
+      border: 1px solid #e0e3e8;
+      border-radius: 7px;
+    }
+
+    .status-value {
+      display: block;
+      margin-top: 5px;
+      font-size: 18px;
+    }
+
+    .chart-container {
+      position: relative;
+      height: 320px;
+      margin-top: 15px;
+    }
+
+    #message {
+      min-height: 22px;
+      margin: 8px 0;
+      color: #b00020;
+      font-weight: bold;
+    }
+
+    .note {
+      margin-top: 8px;
+      color: #555;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="panel">
+
+  <h2>M/M/1 Queue Simulation</h2>
+
+  <div class="controls">
+
+    <label>
+      Arrival rate λ
+      <input
+        id="lambda"
+        type="number"
+        value="0.8"
+        min="0"
+        step="0.1"
+      >
+    </label>
+
+    <label>
+      Service rate μ
+      <input
+        id="mu"
+        type="number"
+        value="1.0"
+        min="0"
+        step="0.1"
+      >
+    </label>
+
+    <label>
+      Histogram bins
+      <input
+        id="binCount"
+        type="number"
+        value="10"
+        min="2"
+        max="30"
+        step="1"
+      >
+    </label>
+
+    <button id="startButton" type="button">
+      Start
+    </button>
+
+    <button id="pauseButton" type="button">
+      Pause
+    </button>
+
+    <button id="resetButton" type="button">
+      Reset
+    </button>
+
+  </div>
+
+  <div id="message"></div>
+
+  <div class="status">
+
+    <div class="status-item">
+      Simulation time
+      <strong
+        id="timeValue"
+        class="status-value"
+      >
+        0.0
+      </strong>
+    </div>
+
+    <div class="status-item">
+      Waiting in queue
+      <strong
+        id="queueValue"
+        class="status-value"
+      >
+        0
+      </strong>
+    </div>
+
+    <div class="status-item">
+      Server status
+      <strong
+        id="serverValue"
+        class="status-value"
+      >
+        Idle
+      </strong>
+    </div>
+
+    <div class="status-item">
+      Customers in system
+      <strong
+        id="systemValue"
+        class="status-value"
+      >
+        0
+      </strong>
+    </div>
+
+    <div class="status-item">
+      Waiting-time samples
+      <strong
+        id="sampleValue"
+        class="status-value"
+      >
+        0
+      </strong>
+    </div>
+
+    <div class="status-item">
+      Average waiting time
+      <strong
+        id="averageWaitValue"
+        class="status-value"
+      >
+        0.00
+      </strong>
+    </div>
+
+    <div class="status-item">
+      Maximum waiting time
+      <strong
+        id="maximumWaitValue"
+        class="status-value"
+      >
+        0.00
+      </strong>
+    </div>
+
+  </div>
+
+  <canvas
+    id="simCanvas"
+    width="900"
+    height="230"
+  ></canvas>
+
+  <h3>Queue length over time</h3>
+
+  <div class="chart-container">
+    <canvas id="queueChart"></canvas>
+  </div>
+
+  <h3>Waiting-time probability density histogram</h3>
+
+  <div class="chart-container">
+    <canvas id="histogramChart"></canvas>
+  </div>
+
+  <p class="note">
+    Waiting time is measured from customer arrival until the
+    customer begins service. The histogram vertical axis shows
+    estimated probability density, so the total area of all bars
+    is approximately equal to 1.
+  </p>
+
+</div>
+
+<script>
+"use strict";
+
+// =====================================================
+// SIMULATION SETTINGS
+// =====================================================
+
+const STEP_DURATION_MS = 300;
+const DELTA_TIME = 0.2;
+const MAX_CHART_POINTS = 250;
+const MAX_VISIBLE_CUSTOMERS = 20;
+
+// =====================================================
+// SIMULATION STATE
+// =====================================================
+
+let queue = [];
+let serverCustomer = null;
+let simulationTime = 0;
+let stepNumber = 0;
+let intervalId = null;
+
+// Store observed waiting times.
+let waitingTimes = [];
+
+// =====================================================
+// HTML ELEMENTS
+// =====================================================
+
+const canvas = document.getElementById("simCanvas");
+const ctx = canvas.getContext("2d");
+
+const lambdaInput = document.getElementById("lambda");
+const muInput = document.getElementById("mu");
+const binCountInput = document.getElementById("binCount");
+
+const timeValue = document.getElementById("timeValue");
+const queueValue = document.getElementById("queueValue");
+const serverValue = document.getElementById("serverValue");
+const systemValue = document.getElementById("systemValue");
+const sampleValue = document.getElementById("sampleValue");
+const averageWaitValue =
+  document.getElementById("averageWaitValue");
+const maximumWaitValue =
+  document.getElementById("maximumWaitValue");
+
+const message = document.getElementById("message");
+
+// =====================================================
+// QUEUE-LENGTH CHART
+// =====================================================
+
+const queueChartContext = document
+  .getElementById("queueChart")
+  .getContext("2d");
+
+const queueChart = new Chart(queueChartContext, {
+  type: "line",
+
+  data: {
+    labels: [],
+
+    datasets: [{
+      label: "Customers in system",
+      data: [],
+      borderWidth: 2,
+      pointRadius: 0,
+      tension: 0.15
+    }]
+  },
+
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+
+    interaction: {
+      intersect: false,
+      mode: "index"
+    },
+
+    scales: {
+      x: {
+        title: {
+          display: true,
+          text: "Simulation time"
+        }
+      },
+
+      y: {
+        beginAtZero: true,
+
+        ticks: {
+          precision: 0
+        },
+
+        title: {
+          display: true,
+          text: "Number of customers"
+        }
+      }
+    }
+  }
+});
+
+// =====================================================
+// WAITING-TIME HISTOGRAM
+// =====================================================
+
+const histogramContext = document
+  .getElementById("histogramChart")
+  .getContext("2d");
+
+const histogramChart = new Chart(histogramContext, {
+  type: "bar",
+
+  data: {
+    labels: [],
+
+    datasets: [{
+      label: "Estimated probability density",
+      data: [],
+      borderWidth: 1,
+      barPercentage: 1.0,
+      categoryPercentage: 1.0
+    }]
+  },
+
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+
+    scales: {
+      x: {
+        title: {
+          display: true,
+          text: "Waiting time"
+        }
+      },
+
+      y: {
+        beginAtZero: true,
+
+        title: {
+          display: true,
+          text: "Probability density"
+        }
+      }
+    },
+
+    plugins: {
+      tooltip: {
+        callbacks: {
+          label: function(context) {
+            return (
+              "Density: " +
+              Number(context.raw).toFixed(4)
+            );
+          }
+        }
+      }
+    }
+  }
+});
+
+// =====================================================
+// INPUT VALIDATION
+// =====================================================
+
+function validateInputs() {
+  const lambda = Number(lambdaInput.value);
+  const mu = Number(muInput.value);
+  const binCount = Number(binCountInput.value);
+
+  if (
+    !Number.isFinite(lambda) ||
+    !Number.isFinite(mu) ||
+    lambda < 0 ||
+    mu < 0
+  ) {
+    message.textContent =
+      "λ and μ must be valid non-negative numbers.";
+
+    return null;
+  }
+
+  if (
+    !Number.isInteger(binCount) ||
+    binCount < 2 ||
+    binCount > 30
+  ) {
+    message.textContent =
+      "Histogram bins must be an integer from 2 to 30.";
+
+    return null;
+  }
+
+  if (lambda >= mu && mu > 0) {
+    message.textContent =
+      "Warning: λ ≥ μ. The queue may grow without limit.";
+  } else {
+    message.textContent = "";
+  }
+
+  return {
+    lambda,
+    mu,
+    binCount
+  };
+}
+
+// Convert a continuous rate into a probability
+// for one discrete simulation interval.
+function probabilityFromRate(rate) {
+  return Math.min(1, rate * DELTA_TIME);
+}
+
+// =====================================================
+// STATUS CALCULATIONS
+// =====================================================
+
+function calculateAverage(values) {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  const total = values.reduce(
+    (sum, value) => sum + value,
+    0
+  );
+
+  return total / values.length;
+}
+
+function calculateMaximum(values) {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  return Math.max(...values);
+}
+
+function updateStatus() {
+  const systemSize =
+    queue.length + (serverCustomer !== null ? 1 : 0);
+
+  const averageWaitingTime =
+    calculateAverage(waitingTimes);
+
+  const maximumWaitingTime =
+    calculateMaximum(waitingTimes);
+
+  timeValue.textContent =
+    simulationTime.toFixed(1);
+
+  queueValue.textContent =
+    queue.length;
+
+  serverValue.textContent =
+    serverCustomer !== null ? "Busy" : "Idle";
+
+  systemValue.textContent =
+    systemSize;
+
+  sampleValue.textContent =
+    waitingTimes.length;
+
+  averageWaitValue.textContent =
+    averageWaitingTime.toFixed(2);
+
+  maximumWaitValue.textContent =
+    maximumWaitingTime.toFixed(2);
+}
+
+// =====================================================
+// DRAW QUEUE ANIMATION
+// =====================================================
+
+function drawCustomer(x, y, fillStyle) {
+  ctx.beginPath();
+  ctx.arc(x, y, 11, 0, 2 * Math.PI);
+
+  ctx.fillStyle = fillStyle;
+  ctx.fill();
+
+  ctx.strokeStyle = "#333";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+function draw() {
+  ctx.clearRect(
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  );
+
+  ctx.font = "15px Arial";
+  ctx.fillStyle = "#222";
+
+  ctx.fillText(
+    "Waiting queue",
+    45,
+    35
+  );
+
+  ctx.fillText(
+    "Server",
+    765,
+    35
+  );
+
+  // Server box
+  ctx.strokeStyle = "#555";
+  ctx.lineWidth = 2;
+
+  ctx.strokeRect(
+    740,
+    70,
+    100,
+    100
+  );
+
+  const visibleCustomers = Math.min(
+    queue.length,
+    MAX_VISIBLE_CUSTOMERS
+  );
+
+  for (
+    let i = 0;
+    i < visibleCustomers;
+    i++
+  ) {
+    const row = Math.floor(i / 10);
+    const column = i % 10;
+
+    const x = 60 + column * 55;
+    const y = 90 + row * 60;
+
+    drawCustomer(
+      x,
+      y,
+      "#3874d8"
+    );
+  }
+
+  if (queue.length > MAX_VISIBLE_CUSTOMERS) {
+    ctx.fillStyle = "#222";
+
+    ctx.fillText(
+      `+${queue.length - MAX_VISIBLE_CUSTOMERS} more`,
+      585,
+      205
+    );
+  }
+
+  if (serverCustomer !== null) {
+    drawCustomer(
+      790,
+      120,
+      "#d94343"
+    );
+
+    ctx.fillStyle = "#333";
+    ctx.fillText(
+      "Serving",
+      765,
+      155
+    );
+  } else {
+    ctx.fillStyle = "#555";
+
+    ctx.fillText(
+      "Idle",
+      777,
+      125
+    );
+  }
+}
+
+// =====================================================
+// QUEUE-LENGTH CHART UPDATE
+// =====================================================
+
+function updateQueueChart() {
+  const systemSize =
+    queue.length + (serverCustomer !== null ? 1 : 0);
+
+  queueChart.data.labels.push(
+    simulationTime.toFixed(1)
+  );
+
+  queueChart.data.datasets[0].data.push(
+    systemSize
+  );
+
+  if (
+    queueChart.data.labels.length >
+    MAX_CHART_POINTS
+  ) {
+    queueChart.data.labels.shift();
+    queueChart.data.datasets[0].data.shift();
+  }
+
+  queueChart.update("none");
+}
+
+// =====================================================
+// HISTOGRAM CALCULATION
+// =====================================================
+
+function calculateHistogram(values, numberOfBins) {
+  if (values.length === 0) {
+    return {
+      labels: [],
+      densities: [],
+      counts: [],
+      binWidth: 0
+    };
+  }
+
+  const minimumValue = Math.min(...values);
+  const maximumValue = Math.max(...values);
+
+  // Avoid a zero-width histogram when all observations
+  // have exactly the same waiting time.
+  let histogramMinimum = Math.min(0, minimumValue);
+  let histogramMaximum = maximumValue;
+
+  if (histogramMaximum === histogramMinimum) {
+    histogramMaximum =
+      histogramMinimum + DELTA_TIME;
+  }
+
+  const binWidth =
+    (histogramMaximum - histogramMinimum) /
+    numberOfBins;
+
+  const counts =
+    new Array(numberOfBins).fill(0);
+
+  for (const value of values) {
+    let binIndex = Math.floor(
+      (value - histogramMinimum) / binWidth
+    );
+
+    // Include the maximum observation in the final bin.
+    if (binIndex >= numberOfBins) {
+      binIndex = numberOfBins - 1;
+    }
+
+    if (binIndex < 0) {
+      binIndex = 0;
+    }
+
+    counts[binIndex]++;
+  }
+
+  const labels = [];
+  const densities = [];
+
+  for (
+    let i = 0;
+    i < numberOfBins;
+    i++
+  ) {
+    const lowerBound =
+      histogramMinimum + i * binWidth;
+
+    const upperBound =
+      lowerBound + binWidth;
+
+    labels.push(
+      `${lowerBound.toFixed(2)}–${upperBound.toFixed(2)}`
+    );
+
+    /*
+      Probability-density estimate:
+
+             count in bin
+      f = ----------------------
+          sample size × bin width
+
+      Therefore:
+
+      Sum(density × bin width) ≈ 1
+    */
+    const density =
+      counts[i] /
+      (values.length * binWidth);
+
+    densities.push(density);
+  }
+
+  return {
+    labels,
+    densities,
+    counts,
+    binWidth
+  };
+}
+
+function updateHistogram() {
+  const binCount =
+    Number(binCountInput.value);
+
+  const histogram = calculateHistogram(
+    waitingTimes,
+    binCount
+  );
+
+  histogramChart.data.labels =
+    histogram.labels;
+
+  histogramChart.data.datasets[0].data =
+    histogram.densities;
+
+  histogramChart.update("none");
+}
+
+// =====================================================
+// START SERVICE
+// =====================================================
+
+function moveNextCustomerToServer() {
+  if (
+    serverCustomer !== null ||
+    queue.length === 0
+  ) {
+    return;
+  }
+
+  const nextCustomer = queue.shift();
+
+  const waitingTime = Math.max(
+    0,
+    simulationTime - nextCustomer.arrivalTime
+  );
+
+  waitingTimes.push(waitingTime);
+
+  serverCustomer = {
+    ...nextCustomer,
+    serviceStartTime: simulationTime
+  };
+}
+
+// =====================================================
+// SIMULATION STEP
+// =====================================================
+
+function simulationStep() {
+  const parameters = validateInputs();
+
+  if (!parameters) {
+    pauseSimulation();
+    return;
+  }
+
+  const {
+    lambda,
+    mu
+  } = parameters;
+
+  const arrivalProbability =
+    probabilityFromRate(lambda);
+
+  const serviceProbability =
+    probabilityFromRate(mu);
+
+  /*
+    1. Finish an existing service.
+    2. Generate an arrival.
+    3. Send the next waiting customer to the server.
+  */
+
+  if (
+    serverCustomer !== null &&
+    Math.random() < serviceProbability
+  ) {
+    serverCustomer = null;
+  }
+
+  if (
+    Math.random() < arrivalProbability
+  ) {
+    queue.push({
+      id: crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random()}`,
+
+      arrivalTime: simulationTime
+    });
+  }
+
+  moveNextCustomerToServer();
+
+  stepNumber++;
+  simulationTime =
+    stepNumber * DELTA_TIME;
+
+  updateStatus();
+  updateQueueChart();
+  updateHistogram();
+  draw();
+}
+
+// =====================================================
+// CONTROL FUNCTIONS
+// =====================================================
+
+function startSimulation() {
+  if (!validateInputs()) {
+    return;
+  }
+
+  if (intervalId !== null) {
+    return;
+  }
+
+  intervalId = window.setInterval(
+    simulationStep,
+    STEP_DURATION_MS
+  );
+}
+
+function pauseSimulation() {
+  if (intervalId !== null) {
+    window.clearInterval(intervalId);
+    intervalId = null;
+  }
+}
+
+function resetSimulation() {
+  pauseSimulation();
+
+  queue = [];
+  serverCustomer = null;
+  waitingTimes = [];
+
+  simulationTime = 0;
+  stepNumber = 0;
+
+  queueChart.data.labels = [];
+  queueChart.data.datasets[0].data = [];
+  queueChart.update("none");
+
+  histogramChart.data.labels = [];
+  histogramChart.data.datasets[0].data = [];
+  histogramChart.update("none");
+
+  message.textContent = "";
+
+  updateStatus();
+  draw();
+}
+
+// =====================================================
+// EVENT LISTENERS
+// =====================================================
+
+document
+  .getElementById("startButton")
+  .addEventListener(
+    "click",
+    startSimulation
+  );
+
+document
+  .getElementById("pauseButton")
+  .addEventListener(
+    "click",
+    pauseSimulation
+  );
+
+document
+  .getElementById("resetButton")
+  .addEventListener(
+    "click",
+    resetSimulation
+  );
+
+binCountInput.addEventListener(
+  "change",
+  updateHistogram
+);
+
+// =====================================================
+// INITIAL DISPLAY
+// =====================================================
+
+updateStatus();
+draw();
+</script>
+
+</body>
+</html>
